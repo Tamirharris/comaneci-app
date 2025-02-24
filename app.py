@@ -18,37 +18,71 @@ ENVIRONMENT = os.getenv('FLASK_ENV', 'development')
 DOMAIN = os.getenv('DOMAIN', 'localhost:5000')
 PROTOCOL = 'https' if ENVIRONMENT == 'production' else 'http'
 
-# Environment variables should be set in .env file, not hardcoded here
-REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
-DO_SPACES_KEY = os.environ.get('DO_SPACES_KEY')
-DO_SPACES_SECRET = os.environ.get('DO_SPACES_SECRET')
-DO_SPACES_BUCKET = os.environ.get('DO_SPACES_BUCKET', 'comaneci-videos')
-DO_SPACES_REGION = os.getenv('DO_SPACES_REGION', 'nyc3')
-
 # Configure Redis Queue
 redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
 redis_conn = Redis.from_url(redis_url)
 queue = Queue(connection=redis_conn)
 
-# Configure upload settings
-app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
-
 # Initialize the Spaces uploader
 spaces_uploader = SpacesUploader()
 
-# Ensure upload and output directories exist
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-os.makedirs('output', exist_ok=True)
-
 @app.route('/')
 def serve_index():
-    return send_from_directory('.', 'index.html')
+    return send_from_directory('static', 'index.html')
 
 @app.route('/static/<path:filename>')
 def serve_static(filename):
     return send_from_directory('static', filename)
+
+@app.route('/api/generate', methods=['POST'])
+def generate_videos():
+    try:
+        data = request.get_json()
+        
+        # Extract parameters from request
+        images = data.get('images', [])
+        prompt = data.get('prompt', '')
+        negative_prompt = data.get('negative_prompt', '')
+        aspect_ratio = str(data.get('aspectRatio', '16:9'))
+        duration = int(data.get('duration', 5))
+        email = data.get('email')
+        
+        # Validate inputs
+        if not images:
+            return jsonify({'error': 'No images provided'}), 400
+            
+        # Convert image data to proper format
+        images_data = []
+        for img in images:
+            if isinstance(img, dict):
+                img_data = {
+                    'name': str(img.get('name', '')),
+                    'url': str(img.get('url', ''))
+                }
+                images_data.append(img_data)
+            else:
+                return jsonify({'error': 'Invalid image data format'}), 400
+        
+        # Create settings dictionary
+        settings = {
+            'prompt': prompt,
+            'negative_prompt': negative_prompt,
+            'aspect_ratio': aspect_ratio,
+            'duration': duration
+        }
+        
+        # Queue the job
+        from tasks import process_bulk_videos
+        job = queue.enqueue(process_bulk_videos, images_data, settings, email)
+        
+        return jsonify({
+            'status': 'success',
+            'batch_id': job.id
+        })
+        
+    except Exception as e:
+        print(f"Error in generate_videos: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

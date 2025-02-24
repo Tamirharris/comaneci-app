@@ -49,62 +49,43 @@ document.addEventListener('DOMContentLoaded', () => {
         
         const formData = new FormData();
         Array.from(files).forEach(file => {
-            if (file.type.startsWith('image/')) {
-                console.log('Adding file to upload:', file.name, file.type, file.size);
-                formData.append('files[]', file);
-            } else {
-                console.log('Skipping non-image file:', file.name, file.type);
-            }
+            formData.append('images[]', file);
         });
-
+        
         try {
-            console.log('Sending upload request...');
+            // Upload files to temporary storage and get URLs
             const response = await fetch('/api/upload', {
                 method: 'POST',
                 body: formData
             });
-
+            
             if (!response.ok) {
-                throw new Error('Upload failed');
+                throw new Error('Failed to upload files');
             }
-
+            
             const data = await response.json();
             console.log('Upload response:', data);
             
-            // Clear existing previews
-            preview.innerHTML = '';
-            uploadedFiles = data.files;
-            console.log('Updated uploadedFiles:', uploadedFiles);
-
-            // Create previews for uploaded files
-            Array.from(files).forEach((file, index) => {
-                if (file.type.startsWith('image/')) {
-                    const reader = new FileReader();
-                    reader.onload = (e) => {
-                        console.log('Creating preview for:', file.name);
-                        const div = document.createElement('div');
-                        div.className = 'relative';
-                        div.innerHTML = `
-                            <img src="${e.target.result}" class="w-full h-32 object-cover rounded">
-                            <button class="absolute top-0 right-0 bg-red-500 text-white p-1 rounded-full m-1" data-file="${uploadedFiles[index]}">×</button>
-                        `;
-                        preview.appendChild(div);
-
-                        // Handle remove button
-                        div.querySelector('button').addEventListener('click', function() {
-                            const fileName = this.dataset.file;
-                            console.log('Removing file:', fileName);
-                            uploadedFiles = uploadedFiles.filter(f => f !== fileName);
-                            div.remove();
-                            console.log('Updated uploadedFiles after remove:', uploadedFiles);
-                        });
-                    };
-                    reader.readAsDataURL(file);
-                }
-            });
+            // Store file data for later use
+            uploadedFiles = data.files.map(file => ({
+                name: file.originalName,
+                url: file.url
+            }));
+            
+            // Show preview
+            preview.innerHTML = uploadedFiles.map(file => `
+                <div class="preview-item">
+                    <img src="${file.url}" alt="${file.name}" class="w-32 h-32 object-cover rounded">
+                    <p class="text-sm mt-1">${file.name}</p>
+                </div>
+            `).join('');
+            
+            // Enable generate button
+            generateBtn.disabled = false;
+            
         } catch (error) {
-            console.error('Upload error:', error);
-            alert('Failed to upload files');
+            console.error('Error:', error);
+            statusDiv.textContent = `Error: ${error.message}`;
         }
     }
 
@@ -157,81 +138,67 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function startStatusChecking(batchId) {
-        const statusCheckInterval = 5000; // Check every 5 seconds
-        let checkCount = 0;
-        const maxChecks = 360; // Maximum 30 minutes of checking
-
-        const checkStatus = async () => {
-            try {
-                const response = await fetch(`/api/status/${batchId}`);
-                const data = await response.json();
-
-                if (response.ok && data.status === 'found') {
-                    updateBatchStatus(data.jobs);
-                    
-                    // Check if all jobs are complete or failed
-                    const allDone = Object.values(data.jobs).every(job => 
-                        job.status === 'completed' || job.status === 'failed'
-                    );
-
-                    if (allDone) {
-                        generateBtn.disabled = false;
-                        clearInterval(statusInterval);
-                    }
-                }
-
-                checkCount++;
-                if (checkCount >= maxChecks) {
-                    clearInterval(statusInterval);
-                    statusDiv.textContent = 'Status checking timed out. Your videos will continue processing in the background.';
-                    generateBtn.disabled = false;
-                }
-            } catch (error) {
-                console.error('Error checking status:', error);
+        // Create a unique event source for this batch
+        const eventSource = new EventSource(`/api/status/${batchId}`);
+        activeEventSources.set(batchId, eventSource);
+        
+        eventSource.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            console.log('Status update:', data);
+            
+            if (data.jobs) {
+                updateBatchStatus(data.jobs);
+            }
+            
+            // Close connection if all jobs are complete or failed
+            if (data.status === 'completed' || data.status === 'failed') {
+                eventSource.close();
+                activeEventSources.delete(batchId);
+                generateBtn.disabled = false;
             }
         };
-
-        const statusInterval = setInterval(checkStatus, statusCheckInterval);
-        checkStatus(); // Check immediately
+        
+        eventSource.onerror = (error) => {
+            console.error('EventSource error:', error);
+            eventSource.close();
+            activeEventSources.delete(batchId);
+            generateBtn.disabled = false;
+            statusDiv.textContent = 'Lost connection to server. Please refresh the page.';
+        };
     }
 
     function updateBatchStatus(jobs) {
-        const results = document.getElementById('videoResults');
+        // Clear previous results
+        videoResults.innerHTML = '';
         
-        // Update status message
-        const completed = Object.values(jobs).filter(j => j.status === 'completed').length;
-        const total = Object.keys(jobs).length;
-        statusDiv.textContent = `Processing: ${completed}/${total} videos complete`;
-
-        // Update results
-        results.innerHTML = '';
-        Object.entries(jobs).forEach(([jobId, job]) => {
+        // Add new results
+        jobs.forEach(job => {
             const resultDiv = document.createElement('div');
-            resultDiv.className = 'bg-white p-4 rounded-lg shadow';
+            resultDiv.className = 'mb-4 p-4 border rounded';
             
-            let content = `
-                <h3 class="font-bold">${job.data?.filename || jobId}</h3>
-                <p class="text-sm ${job.status === 'failed' ? 'text-red-500' : 'text-gray-600'}">
-                    ${job.data?.message || job.status}
-                </p>
-            `;
-
-            if (job.status === 'completed' && job.data?.video_url) {
-                content += `
-                    <div class="mt-2">
-                        <video controls class="w-full rounded">
-                            <source src="${job.data.video_url}" type="video/mp4">
-                            Your browser does not support the video tag.
-                        </video>
-                        <a href="${job.data.video_url}" target="_blank" class="inline-block mt-2 bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">
-                            Download Video
-                        </a>
-                    </div>
+            if (job.status === 'completed' && job.data && job.data.video_url) {
+                resultDiv.innerHTML = `
+                    <h3 class="text-lg font-semibold">${job.filename}</h3>
+                    <p class="text-green-600">✅ Complete</p>
+                    <video controls class="mt-2 w-full max-w-md">
+                        <source src="${job.data.video_url}" type="video/mp4">
+                        Your browser does not support the video tag.
+                    </video>
+                    <a href="${job.data.video_url}" class="mt-2 inline-block text-blue-600 hover:underline" download>Download Video</a>
+                `;
+            } else if (job.status === 'failed') {
+                resultDiv.innerHTML = `
+                    <h3 class="text-lg font-semibold">${job.filename}</h3>
+                    <p class="text-red-600">❌ Failed: ${job.data?.error || 'Unknown error'}</p>
+                `;
+            } else {
+                resultDiv.innerHTML = `
+                    <h3 class="text-lg font-semibold">${job.filename}</h3>
+                    <p class="text-blue-600">⏳ Processing...</p>
                 `;
             }
-
-            resultDiv.innerHTML = content;
-            results.appendChild(resultDiv);
+            
+            videoResults.appendChild(resultDiv);
         });
     }
 

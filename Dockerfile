@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y \
 
 # Copy requirements first for better caching
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && pip install --no-cache-dir boto3==1.34.0
 
 # Copy application code
 COPY . .
