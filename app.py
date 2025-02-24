@@ -28,11 +28,21 @@ spaces_uploader = SpacesUploader()
 
 @app.route('/')
 def serve_index():
-    return send_from_directory('static', 'index.html')
+    print("Serving index.html from static directory")
+    try:
+        return send_from_directory('static', 'index.html')
+    except Exception as e:
+        print(f"Error serving index.html: {str(e)}")
+        return str(e), 500
 
 @app.route('/static/<path:filename>')
 def serve_static(filename):
-    return send_from_directory('static', filename)
+    print(f"Serving static file: {filename}")
+    try:
+        return send_from_directory('static', filename)
+    except Exception as e:
+        print(f"Error serving static file {filename}: {str(e)}")
+        return str(e), 500
 
 @app.route('/api/generate', methods=['POST'])
 def generate_videos():
