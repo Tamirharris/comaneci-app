@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment
+.env
+env_settings.txt
+.env.prod
+
+# Google Cloud credentials
+service_account.json
+
+# Directories
+uploads/
+output/
+
+# Local development
+.vscode/
+.idea/
