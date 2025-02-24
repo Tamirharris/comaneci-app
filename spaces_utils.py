@@ -5,11 +5,11 @@ from botocore.client import Config
 
 class SpacesUploader:
     def __init__(self):
-        # Set up credentials
-        self.spaces_key = 'DO8017PTXKHZHYF3GLC3'
-        self.spaces_secret = '8hyq2IcxEb5nXW0a7QsS9BMyanDQbhYdMTUqkIun4SU'
-        self.bucket = 'comaneci-videos'
-        self.region = 'nyc3'
+        # Get credentials from environment variables
+        self.spaces_key = os.environ.get('DO_SPACES_KEY')
+        self.spaces_secret = os.environ.get('DO_SPACES_SECRET')
+        self.bucket = os.environ.get('DO_SPACES_BUCKET', 'comaneci-videos')
+        self.region = os.environ.get('DO_SPACES_REGION', 'nyc3')
         
         self.session = boto3.session.Session()
         self.client = self.session.client('s3',
